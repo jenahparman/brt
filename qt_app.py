@@ -3,14 +3,12 @@ import numpy as np
 import pandas as pd
 from PyQt5.QtWidgets import (
     QApplication, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QComboBox, QPushButton, QFileDialog, QWidget, QMessageBox
+    QComboBox, QPushButton, QFileDialog, QWidget, QMessageBox, QInputDialog
 )
-from PyQt5.QtGui import QDoubleValidator
-from PyQt5.QtCore import Qt
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 
-# Normalize and scale curves
+# Define normalized curves
 curves = {
     "ELE": [0.13, 0.19, 0.29, 0.58, 1.16, 1.62, 2.10, 2.19, 2.30, 2.39, 2.49, 2.51],
     "ISM": [0.35, 0.54, 0.79, 1.44, 1.67, 1.76, 2.29, 2.73, 3.75, 4.95, 5.54, 6.14],
@@ -27,12 +25,26 @@ def scale_curve(percentages, original_weeks, new_weeks):
     scaled_curve = interpolation_function(new_x)
     return scaled_curve / np.sum(scaled_curve)
 
-# Redistribute hours
-def redistribute_hours(total_hours, num_weeks, curve):
-    curve_scaled = scale_curve(curve, len(curve), num_weeks)
-    redistributed_hours = total_hours * curve_scaled
+# Function to redistribute hours
+def redistribute_hours(total_hours, num_weeks, curve_type, custom_curve=None, percentages=None, original_weeks=None):
+    if curve_type in normalized_curves:
+        curve = scale_curve(normalized_curves[curve_type], len(curves[curve_type]), num_weeks)
+    elif curve_type == "Linear":
+        curve = np.ones(num_weeks) / num_weeks
+    elif curve_type == "Bell":
+        curve = np.exp(-0.5 * (np.linspace(-2, 2, num_weeks) ** 2))
+        curve /= np.sum(curve)  # Normalize
+    elif curve_type == "Custom" and custom_curve is not None:
+        curve = np.array(custom_curve) / np.sum(custom_curve)  # Normalize
+    elif curve_type == "Fitted" and percentages is not None and original_weeks is not None:
+        curve = scale_curve(percentages, original_weeks, num_weeks)
+    else:
+        raise ValueError("Invalid curve type or missing input for selected option.")
+
+    # Redistribute the hours
+    redistributed_hours = total_hours * curve
     weeks = [f"Week {i+1}" for i in range(num_weeks)]
-    return pd.DataFrame({"Week": weeks, "Redistributed Hours": redistributed_hours, "Curve Value": curve_scaled})
+    return pd.DataFrame({"Week": weeks, "Redistributed Hours": redistributed_hours, "Curve Value": curve})
 
 # Main Application Window
 class BudgetRedistributionApp(QWidget):
@@ -48,19 +60,17 @@ class BudgetRedistributionApp(QWidget):
         # Inputs
         layout.addWidget(QLabel("Total Hours Budget:"))
         self.total_hours_input = QLineEdit()
-        self.total_hours_input.setValidator(QDoubleValidator(0.0, 1e6, 2))
         self.total_hours_input.setText("1000")
         layout.addWidget(self.total_hours_input)
 
         layout.addWidget(QLabel("Number of Weeks:"))
         self.num_weeks_input = QLineEdit()
-        self.num_weeks_input.setValidator(QDoubleValidator(1, 200, 0))
         self.num_weeks_input.setText("50")
         layout.addWidget(self.num_weeks_input)
 
         layout.addWidget(QLabel("Curve Type:"))
         self.curve_selector = QComboBox()
-        self.curve_selector.addItems(["ELE", "ISM", "Linear", "Bell"])
+        self.curve_selector.addItems(["ELE", "ISM", "Linear", "Bell", "Custom", "Fitted"])
         layout.addWidget(self.curve_selector)
 
         # Buttons
@@ -80,23 +90,50 @@ class BudgetRedistributionApp(QWidget):
     def redistribute(self):
         try:
             total_hours = float(self.total_hours_input.text())
-            num_weeks = int(float(self.num_weeks_input.text()))
+            num_weeks = int(self.num_weeks_input.text())
             curve_type = self.curve_selector.currentText()
 
             if curve_type in normalized_curves:
                 curve = normalized_curves[curve_type]
             elif curve_type == "Linear":
-                curve = np.ones(10) / 10  # Example linear curve
+                curve = np.ones(num_weeks) / num_weeks
             elif curve_type == "Bell":
-                curve = np.exp(-0.5 * (np.linspace(-2, 2, 10) ** 2)) / np.sum(
-                    np.exp(-0.5 * (np.linspace(-2, 2, 10) ** 2))
+                curve = np.exp(-0.5 * (np.linspace(-2, 2, num_weeks) ** 2))
+                curve /= np.sum(curve)
+            elif curve_type == "Custom":
+                custom_input, ok = self.get_user_input("Custom Curve", f"Enter {num_weeks} values (comma-separated):")
+                if not ok or not custom_input:
+                    QMessageBox.warning(self, "Error", "Invalid custom input.")
+                    return
+                custom_curve = [float(x) for x in custom_input.split(",")]
+                if len(custom_curve) != num_weeks:
+                    QMessageBox.warning(self, "Error", f"Enter exactly {num_weeks} values.")
+                    return
+                curve = np.array(custom_curve) / np.sum(custom_curve)
+            elif curve_type == "Fitted":
+                original_weeks_input, ok = self.get_user_input("Original Weeks", "Enter the number of weeks in the original curve:")
+                if not ok or not original_weeks_input.isdigit():
+                    QMessageBox.warning(self, "Error", "Invalid input for original weeks.")
+                    return
+                original_weeks = int(original_weeks_input)
+
+                percentages_input, ok = self.get_user_input(
+                    "Fitted Curve", f"Enter {original_weeks} percentages (comma-separated):"
                 )
+                if not ok or not percentages_input:
+                    QMessageBox.warning(self, "Error", "Invalid input for fitted curve.")
+                    return
+                percentages = [float(x) for x in percentages_input.split(",")]
+                if len(percentages) != original_weeks:
+                    QMessageBox.warning(self, "Error", f"Enter exactly {original_weeks} percentages.")
+                    return
+                curve = scale_curve(percentages, original_weeks, num_weeks)
             else:
                 QMessageBox.critical(self, "Error", "Invalid curve type selected!")
                 return
 
             # Redistribute hours
-            self.results = redistribute_hours(total_hours, num_weeks, curve)
+            self.results = redistribute_hours(total_hours, num_weeks, curve_type, custom_curve, percentages, original_weeks)
             QMessageBox.information(self, "Success", "Redistribution complete!")
             self.plot_curve()
             self.save_button.setDisabled(False)
@@ -125,6 +162,12 @@ class BudgetRedistributionApp(QWidget):
             if file_path:
                 self.results.to_excel(file_path, index=False)
                 QMessageBox.information(self, "Success", f"File saved to {file_path}")
+
+    def get_user_input(self, title, label):
+        """Helper method to show a dialog for user input."""
+        input_text, ok = QInputDialog.getText(self, title, label)
+        return input_text, ok
+
 
 # Main application loop
 if __name__ == "__main__":

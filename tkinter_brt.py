@@ -3,7 +3,8 @@ from tkinter import ttk, messagebox
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
-import openpyxl
+import os
+from tkinter import filedialog, messagebox
 
 # Define all shop curves
 # Define all curves in a dictionary for easier management
@@ -116,6 +117,8 @@ curves = {
     ]
 }
 
+redistribute_hours = []
+
 # Normalize the curves
 for key in curves:
     curves[key] = curves[key] / np.sum(curves[key])
@@ -154,35 +157,42 @@ def process_batch():
         df = pd.DataFrame(results).T
         df.columns = [f"Week {i+1}" for i in range(num_weeks)]
         
-        # Show results in the table
-        for i in result_tree.get_children():
-            result_tree.delete(i)
-        for shop, values in df.iterrows():
-            result_tree.insert("", "end", values=[shop] + list(values))
-
-        # Save results to Excel
-        df.to_excel("redistributed_hours.xlsx", index=True)
-        messagebox.showinfo("Success", "Redistributed hours saved as 'redistributed_hours.xlsx'.")
+        messagebox.showinfo("Success", "PDFs parsed successfully! Press 'Save to Excel' to save hours.")
 
     except ValueError:
         messagebox.showerror("Input Error", "Please enter valid numeric values for all fields.")
 
+def save_to_excel():
+    folder_selected = filedialog.askdirectory(title="Select Folder to Save Files")
+
+    if not folder_selected:
+        return
+    redistributed_hours_file = os.path.join(folder_selected, rf"Redistributed Hours.xlsx")
+
+    redistributed_hours = pd.DataFrame()
+
+    with pd.ExcelWriter(redistributed_hours_file) as writer:
+        redistribute_hours.to_excel(writer, sheet_name='Redistributed Hours', index=False)
+
+    messagebox.showinfo("Success", f"File saved:\n{redistributed_hours_file}")
+
+
 # Create Tkinter window
 root = tk.Tk()
 root.title("Budget Redistribution Tool")
-root.geometry("600x500")
+root.geometry("500x600")
 
 # Number of Weeks Entry
-tk.Label(root, text="Enter Desired Number of Weeks:").pack(pady=5)
-weeks_entry = tk.Entry(root)
-weeks_entry.pack(pady=5)
+tk.Label(root, text="Enter Desired Number of Weeks:", font=("Dubai", 12)).pack(pady=(15,2))
+weeks_entry = tk.Entry(root, width=7)
+weeks_entry.pack(pady=(2,5))
 
 # Shop Entry Fields
 shop_entries = {}
 frame = tk.Frame(root)
 frame.pack(pady=10)
 
-tk.Label(frame, text="Enter Hours for Each Shop Type:", font=("Arial", 12, "bold")).grid(row=0, column=1, padx=5)
+tk.Label(frame, text="Enter Shop Hours:", font=("Dubai", 12)).grid(row=0, column=1, padx=5)
 for i, shop in enumerate(curves.keys()):
     tk.Label(frame, text=f"{shop}:").grid(row=i+1, column=0, sticky="e", padx=5)
     entry = tk.Entry(frame, width=10)
@@ -190,17 +200,10 @@ for i, shop in enumerate(curves.keys()):
     shop_entries[shop] = entry
 
 # Process Button
-tk.Button(root, text="Redistribute Hours", command=process_batch).pack(pady=10)
+tk.Button(root, text="Redistribute Hours", command=process_batch, font=("Dubai", 10)).pack(pady=10)
 
-# Results Table
-tk.Label(root, text="Results (Shops as Rows, Weeks as Columns):").pack()
-result_tree = ttk.Treeview(root, columns=["Shop"] + [f"Week {i+1}" for i in range(10)], show="headings")
-result_tree.pack(expand=True, fill="both")
+tk.Button(root, text="Save to Excel", command=save_to_excel, font=("Dubai", 10)).pack(pady=10)
 
-# Set column headings
-result_tree.heading("Shop", text="Shop")
-for i in range(10):
-    result_tree.heading(f"Week {i+1}", text=f"Week {i+1}")
 
 # Run Tkinter Loop
 root.mainloop()
